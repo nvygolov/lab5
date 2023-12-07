@@ -1,264 +1,123 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
 #include <string>
-#include <stdio.h>
-#include <string.h>
-#include <cstdlib>
-#include <iostream>
 #include <fstream>
 #include <ctime>
-#include <tchar.h>
-#include <Shlwapi.h>
+#include <cstdlib>
+
 
 // Глобальные переменные
-HINSTANCE hInst;
-LPCWSTR szTitle = L"WinAPI App";
-LPCWSTR szWindowClass = L"WinAPIClass";
-HWND hWnd;
-HANDLE hMapFile;
-HANDLE hMutex;
-constexpr LPCTSTR szMutexName = TEXT("MySharedMemoryMutex");
-LPVOID pData;
-LPCTSTR szMapFileName = TEXT("Local\\MySharedMemory");
-int N = 10;
-constexpr UINT syncMsg = WM_USER + 1;
+HINSTANCE hInst; // Дескриптор приложения
+LPCWSTR szTitle = L"WinAPI App"; // Заголовок окна
+LPCWSTR szWindowClass = L"WinAPIClass"; // Класс окна
+HWND hWnd; // Дескриптор окна
+int N = 8; // Размер поля по умолчанию
 
-COLORREF gridColor = RGB(255, 0, 0);
-COLORREF circleColor = RGB(255, 255, 0);
-COLORREF crossColor = RGB(255, 255, 0);
-COLORREF backgroundColor = RGB(0, 0, 255);
-int windowWidth = 320;
-int windowHeight = 240;
+COLORREF gridColor = RGB(255, 0, 0);     // Красный цвет сетки
+COLORREF circleColor = RGB(255, 255, 0); // Желтый цвет круга
+COLORREF crossColor = RGB(0, 255, 0);   // Зеленый цвет крестика
+COLORREF backgroundColor = RGB(0, 0, 255);  // Синий фон
+int windowWidth = 320;  // По умолчанию
+int windowHeight = 240; // По умолчанию
 
-void DrawGrid(HDC hdc, int width, int height, int cellSizeX, int cellSizeY)
+
+std::string configFileName = "data.txt";
+
+// Функция для сохранения конфигурации в файл
+void SaveConfig() {
+	std::ofstream file(configFileName);
+	if (file.is_open()) {
+		// Запись размера сетки
+		file << N << std::endl;
+		// Запись цвета сетки
+		file << int(GetRValue(gridColor)) << " " << int(GetGValue(gridColor)) << " " << int(GetBValue(gridColor)) << std::endl;
+		// Запись цвета фона
+		file << int(GetRValue(backgroundColor)) << " " << int(GetGValue(backgroundColor)) << " " << int(GetBValue(backgroundColor)) << std::endl;
+		// Запись ширины и высоты
+		file << windowWidth << " " << windowHeight << std::endl;
+		file.close();
+	}
+}
+
+// Функция для загрузки конфигурации из файла
+bool LoadConfig() {
+	std::ifstream file(configFileName);
+	if (!file.is_open()) {
+		return false;
+	}
+	// Чтение размера сетки
+	if (!(file >> N)) return false;
+
+	int r, g, b;
+	// Чтение цвета сетки
+	if (!(file >> r >> g >> b)) return false;
+	gridColor = RGB(r, g, b);
+	// Чтение цвета фона
+	if (!(file >> r >> g >> b)) return false;
+	backgroundColor = RGB(r, g, b);
+	// Чтение ширины и высоты 
+	if (!(file >> windowWidth >> windowHeight)) return false;
+	file >> windowWidth >> windowHeight;
+
+	SetWindowPos(hWnd, NULL, 0, 0, windowWidth, windowHeight, SWP_NOMOVE | SWP_NOZORDER);
+
+	file.close();
+	return true;
+}
+// Функция для отрисовки сетки
+void DrawGrid(HDC hdc, int width, int height, int cellWidth, int cellHeight)
 {
 	HPEN hPen = CreatePen(PS_SOLID, 1, gridColor);
 	HGDIOBJ hOldPen = SelectObject(hdc, hPen);
 
 	for (int i = 0; i <= N; i++) {
-		int x = i * cellSizeX;
-		int y = i * cellSizeY;
-		MoveToEx(hdc, x, 0, nullptr);
-		LineTo(hdc, x, height);
-		MoveToEx(hdc, 0, y, nullptr);
-		LineTo(hdc, width, y);
+		int x = i * cellWidth;
+		int y = i * cellHeight;
+		MoveToEx(hdc, x, 0, nullptr); // Перемещаемся в начальную точку
+		LineTo(hdc, x, height); // Рисуем вертикальную линию
+		MoveToEx(hdc, 0, y, nullptr); // Перемещаемся в начальную точку
+		LineTo(hdc, width, y); // Рисуем горизонтальную линию
 	}
 
 	SelectObject(hdc, hOldPen);
 	DeleteObject(hPen);
 }
 
-void DrawCircle(HDC hdc, int x, int y, int cellSize) {
-	int circleSize = cellSize / 2;
-	HBRUSH hCircleBrush = CreateSolidBrush(circleColor);
-	HGDIOBJ oldBrush = SelectObject(hdc, hCircleBrush);
+// Функция для отрисовки круга
+void DrawCircle(HDC hdc, int x, int y, int cellWidth, int cellHeight) {
+	HBRUSH hCircleBrush = CreateSolidBrush(circleColor); // Создаем кисть для круга
+	HGDIOBJ oldBrush = SelectObject(hdc, hCircleBrush); // Сохраняем текущую кисть
 
-	Ellipse(hdc, x + (cellSize - circleSize) / 2, y + (cellSize - circleSize) / 2,
-		x + (cellSize + circleSize) / 2, y + (cellSize + circleSize) / 2);
+	Ellipse(hdc, x, y, x + cellWidth, y + cellHeight); // Рисуем круг
 
-	SelectObject(hdc, oldBrush);
-	DeleteObject(hCircleBrush);
+	SelectObject(hdc, oldBrush); // Восстанавливаем исходную кисть
+	DeleteObject(hCircleBrush); // Удаляем временную кисть
 }
 
-void DrawCross(HDC hdc, int x, int y, int cellSize) {
-	int crossSize = cellSize / 2;
-	HPEN hCrossPen = CreatePen(PS_SOLID, 2, crossColor);
-	HGDIOBJ oldPen = SelectObject(hdc, hCrossPen);
+// Функция для отрисовки крестика
+void DrawCross(HDC hdc, int x, int y, int cellWidth, int cellHeight) {
+	HPEN hCrossPen = CreatePen(PS_SOLID, 2, crossColor); // Создаем перо для крестика
+	HGDIOBJ oldPen = SelectObject(hdc, hCrossPen); // Сохраняем текущее перо
 
-	MoveToEx(hdc, x + (cellSize - crossSize) / 2, y + (cellSize - crossSize) / 2, nullptr);
-	LineTo(hdc, x + (cellSize + crossSize) / 2, y + (cellSize + crossSize) / 2);
-	MoveToEx(hdc, x + (cellSize - crossSize) / 2, y + (cellSize + crossSize) / 2, nullptr);
-	LineTo(hdc, x + (cellSize + crossSize) / 2, y + (cellSize - crossSize) / 2);
+	MoveToEx(hdc, x, y, nullptr); // Перемещаемся в начальную точку
+	LineTo(hdc, x + cellWidth, y + cellHeight); // Рисуем диагональную линию
+	MoveToEx(hdc, x + cellWidth, y, nullptr); // Перемещаемся в начальную точку
+	LineTo(hdc, x, y + cellHeight); // Рисуем обратную диагональную линию
 
-	SelectObject(hdc, oldPen);
-	DeleteObject(hCrossPen);
-}
-
-struct Config {
-	COLORREF gridColor;
-	COLORREF circleColor;
-	COLORREF crossColor;
-	COLORREF backgroundColor;
-	int windowWidth;
-	int windowHeight;
-};
-
-char loadMethod[10] = "";
-Config config = { 0 };
-const TCHAR* CONFIG_FILE_PATH = TEXT("C:\\Users\\Nikita Vygoloff\\Desktop\\lab5");
-
-void UpdateUI() {
-	// Обновление вашего интерфейса
-	// Например, перерисовка или другие действия
-
-	// Чтение конфигурации из общей памяти и применение её
-	memcpy(&config, pData, sizeof(Config));
-
-	InvalidateRect(hWnd, nullptr, TRUE);
-}
-
-bool LoadConfig() {
-	if (strcmp(loadMethod, "map") == 0) {
-		HANDLE hFile = CreateFile(CONFIG_FILE_PATH, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (hFile == INVALID_HANDLE_VALUE) return false;
-
-		HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
-		if (hMapping == NULL) {
-			CloseHandle(hFile);
-			return false;
-		}
-
-		LPVOID pView = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
-		if (pView == NULL) {
-			CloseHandle(hMapping);
-			CloseHandle(hFile);
-			return false;
-		}
-
-		CopyMemory(&config, pView, sizeof(Config));
-		UnmapViewOfFile(pView);
-		CloseHandle(hMapping);
-		CloseHandle(hFile);
-	}
-	else if (strcmp(loadMethod, "stdio") == 0) {
-		FILE* file = _tfopen(CONFIG_FILE_PATH, _T("rb"));
-		if (!file) return false;
-
-		size_t readCount = fread(&config, sizeof(Config), 1, file);
-		fclose(file);
-
-		if (readCount != 1) return false;
-	}
-	else if (strcmp(loadMethod, "fstream") == 0) {
-		std::ifstream file(CONFIG_FILE_PATH, std::ios::binary);
-		if (!file.is_open()) return false;
-
-		file.read(reinterpret_cast<char*>(&config), sizeof(Config));
-		if (!file) {
-			file.close();
-			return false;
-		}
-		file.close();
-	}
-	else if (strcmp(loadMethod, "winapi") == 0) {
-		HANDLE hFile = CreateFile(CONFIG_FILE_PATH, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (hFile == INVALID_HANDLE_VALUE) return false;
-
-		DWORD bytesRead;
-		BOOL readResult = ReadFile(hFile, &config, sizeof(Config), &bytesRead, NULL);
-		CloseHandle(hFile);
-
-		if (!readResult || bytesRead != sizeof(Config)) return false;
-	}
-	else {
-		return false;
-	}
-
-	return true;
-}
-
-void SaveConfig() {
-	if (strcmp(loadMethod, "map") == 0) {
-		HANDLE hFile = CreateFile(CONFIG_FILE_PATH, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (hFile == INVALID_HANDLE_VALUE) return;
-
-		HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READWRITE, 0, sizeof(Config), NULL);
-		if (hMapping == NULL) {
-			CloseHandle(hFile);
-			return;
-		}
-
-		LPVOID pView = MapViewOfFile(hMapping, FILE_MAP_WRITE, 0, 0, sizeof(Config));
-		if (pView == NULL) {
-			CloseHandle(hMapping);
-			CloseHandle(hFile);
-			return;
-		}
-
-		CopyMemory(pView, &config, sizeof(Config));
-		UnmapViewOfFile(pView);
-		CloseHandle(hMapping);
-		CloseHandle(hFile);
-	}
-	else if (strcmp(loadMethod, "stdio") == 0) {
-		FILE* file = _tfopen(CONFIG_FILE_PATH, _T("wb"));
-		if (file) {
-			fwrite(&config, sizeof(Config), 1, file);
-			fclose(file);
-		}
-	}
-	else if (strcmp(loadMethod, "fstream") == 0) {
-		std::ofstream file(CONFIG_FILE_PATH, std::ios::binary);
-		if (file.is_open()) {
-			file.write(reinterpret_cast<const char*>(&config), sizeof(Config));
-			file.close();
-		}
-	}
-	else if (strcmp(loadMethod, "winapi") == 0) {
-		HANDLE hFile = CreateFile(CONFIG_FILE_PATH, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (hFile != INVALID_HANDLE_VALUE) {
-			DWORD bytesWritten;
-			WriteFile(hFile, &config, sizeof(Config), &bytesWritten, NULL);
-			CloseHandle(hFile);
-		}
-	}
-}
-
-void SetDefaultConfigValues() {
-	config.gridColor = RGB(255, 0, 0);
-	config.circleColor = RGB(255, 255, 0);
-	config.crossColor = RGB(255, 255, 0);
-	config.backgroundColor = RGB(0, 0, 255);
-	config.windowWidth = 320;
-	config.windowHeight = 240;
+	SelectObject(hdc, oldPen); // Восстанавливаем исходное перо
+	DeleteObject(hCrossPen); // Удаляем временное перо
 }
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
 
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-
-	/*if (lpCmdLine[0] == '\0') {
-		MessageBox(NULL, TEXT("Аргументы командной строки не предоставлены."), TEXT("Предупреждение"), MB_OK);
-	}*/
-
-	int argc;
-	LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-
-	// Установка метода загрузки и сохранения по умолчанию
-	strcpy_s(loadMethod, "winapi");
-
-	if (argc > 1) {
-		// Если первый аргумент командной строки - это "map", "stdio", "fstream" или "winapi"
-		wcstombs(loadMethod, argv[1], sizeof(loadMethod) - 1);
-		loadMethod[sizeof(loadMethod) - 1] = '\0'; // Убедимся, что строка всегда заканчивается нуль-терминатором
-
-		TCHAR message[256];
-		if (strcmp(loadMethod, "map") == 0 ||
-			strcmp(loadMethod, "stdio") == 0 ||
-			strcmp(loadMethod, "fstream") == 0 ||
-			strcmp(loadMethod, "winapi") == 0) {
-			_stprintf_s(message, TEXT("Введите метод: %hs"), loadMethod);
-			MessageBox(NULL, message, TEXT("Информация"), MB_OK);
-		}
-		else {
-			_stprintf_s(message, TEXT("Вы ввели неподдерживаемый метод: %hs"), loadMethod);
-			MessageBox(NULL, message, TEXT("Ошибка!"), MB_OK);
-			strcpy_s(loadMethod, "winapi");
-		}
-	}
-
-	// Попытка загрузить конфигурацию
+	// Сделать окно стандартого размера, если не откроется файл
 	if (!LoadConfig()) {
-		SetDefaultConfigValues();
+		windowWidth = 320;
+		windowHeight = 240;
 	}
 
-	windowWidth = config.windowWidth;
-	windowHeight = config.windowHeight;
-	gridColor = config.gridColor;
-	circleColor = config.circleColor;
-	crossColor = config.crossColor;
-	backgroundColor = config.backgroundColor;
 
 	// Создаем и регистрируем класс окна
 	WNDCLASSEX wcex = {
@@ -274,26 +133,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		szWindowClass,             // Имя класса окна
 		NULL                       // Маленькая иконка окна
 	};
-	RegisterClassEx(&wcex);
+	RegisterClassEx(&wcex);  // Регистрируем класс окна с операционной системой
 
 	hInst = hInstance;  // Сохраняем дескриптор текущего экземпляра приложения
 
-
+	// Создаем окно с параметрами
 	hWnd = CreateWindow(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, windowWidth, windowHeight, NULL, NULL, hInstance, NULL);
-
-	hMapFile = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(Config), szMapFileName);
-	if (hMapFile == NULL) {
-		MessageBox(NULL, TEXT("Could not create file mapping object"), TEXT("Error"), MB_OK | MB_ICONERROR);
-		return 1;
-	}
-
-	pData = MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Config));
-	if (pData == NULL) {
-		CloseHandle(hMapFile);
-		MessageBox(NULL, TEXT("Could not map view of file"), TEXT("Error"), MB_OK | MB_ICONERROR);
-		return 1;
-	}
-
 
 	RECT rect;
 	rect.left = rect.top = 0;
@@ -307,142 +152,83 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	SetWindowPos(hWnd, NULL, 0, 0, adjustedWidth, adjustedHeight, SWP_NOMOVE | SWP_NOZORDER);
 
 
-	ShowWindow(hWnd, nCmdShow);
-	UpdateWindow(hWnd);
-
-	hMutex = CreateMutex(NULL, FALSE, szMutexName);
-	if (hMutex == NULL) {
-		MessageBox(NULL, TEXT("Не удалось создать мьютекс"), TEXT("Ошибка"), MB_OK | MB_ICONERROR);
-		return 1;
-	}
+	ShowWindow(hWnd, nCmdShow);  // Отображаем окно на экране с указанным режимом (nCmdShow)
+	UpdateWindow(hWnd);  // Обновляем клиентскую область окна
 
 	MSG msg;
-	while (GetMessage(&msg, nullptr, 0, 0)) {
-		if (msg.message == syncMsg) {
-			// Ожидание мьютекса перед обновлением интерфейса
-			WaitForSingleObject(hMutex, INFINITE);
-
-			// Обработка сообщения синхронизации
-			// Дополнительные действия по обновлению интерфейса или другие действия
-			// Например, вызов функции обновления интерфейса
-			UpdateUI();
-
-			// Освобождение мьютекса после обновления интерфейса
-			ReleaseMutex(hMutex);
-		}
-		else {
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-		}
+	while (GetMessage(&msg, NULL, 0, 0)) {
+		TranslateMessage(&msg);  // Переводим специфические сообщения клавиш в символы
+		DispatchMessage(&msg);   // Отправляем сообщение для обработки в WndProc
 	}
 
-
-	printf("Saving configuration:\nGrid Color: 0x%06X\nCircle Color: 0x%06X\nCross Color: 0x%06X\nBackground Color: 0x%06X\nWindow Width: %d\nWindow Height: %d\n",
-		config.gridColor,
-		config.circleColor,
-		config.crossColor,
-		config.backgroundColor,
-		config.windowWidth,
-		config.windowHeight);
+	// Сохраняем конфигурацию в файл перед закрытием
 	SaveConfig();
-	LocalFree(argv);
-
-	CloseHandle(hMutex);
-	LocalFree(argv);
-
-	return (int)msg.wParam;
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
 	PAINTSTRUCT ps;
 	HDC hdc;
 
-	// Объявляем переменные здесь
 	int clickX = 0;
 	int clickY = 0;
-	int x = 0;
-	int y = 0;
+
+	RECT rect;
+	GetClientRect(hWnd, &rect);
+	int cellWidth = rect.right / N;
+	int cellHeight = rect.bottom / N;
+
+	hdc = GetDC(hWnd);
+	clickX = LOWORD(lParam);
+	clickY = HIWORD(lParam);
 
 	switch (message) {
-
+		// Изменение размеров экрана
 	case WM_SIZE:
 		windowWidth = LOWORD(lParam);
 		windowHeight = HIWORD(lParam);
-		config.windowWidth = LOWORD(lParam);
-		config.windowHeight = HIWORD(lParam);
 		InvalidateRect(hWnd, nullptr, TRUE);
 		break;
 
+		// Отрисовка сетки
 	case WM_PAINT:
 		hdc = BeginPaint(hWnd, &ps);
 		{
-			RECT rect;
-			GetClientRect(hWnd, &rect);
-			int cellSizeX = rect.right / N;
-			int cellSizeY = rect.bottom / N;
-			x = 0;
-			y = 0;
-
-			HBRUSH hbr = CreateSolidBrush(config.backgroundColor);
+			HBRUSH hbr = CreateSolidBrush(backgroundColor);
 			FillRect(hdc, &ps.rcPaint, hbr);
 			DeleteObject(hbr);
 
-			DrawGrid(hdc, rect.right, rect.bottom, cellSizeX, cellSizeY);
+			DrawGrid(hdc, rect.right, rect.bottom, cellWidth, cellHeight);
 		}
 		EndPaint(hWnd, &ps);
 		break;
 
+		// Отрисовка круга
 	case WM_LBUTTONDOWN:
-		WaitForSingleObject(hMutex, INFINITE);
-		hdc = GetDC(hWnd);
-		clickX = LOWORD(lParam);
-		clickY = HIWORD(lParam);
-		{
-			RECT rect;
-			GetClientRect(hWnd, &rect);
-			int cellSizeX = rect.right / N;
-			int cellSizeY = rect.bottom / N;
-			DrawCircle(hdc, (clickX / cellSizeX) * cellSizeX, (clickY / cellSizeY) * cellSizeY, cellSizeX);
-		}
+		DrawCircle(hdc, (clickX / cellWidth) * cellWidth, (clickY / cellHeight) * cellHeight, cellWidth, cellHeight);
 		ReleaseDC(hWnd, hdc);
-		// Освобождение мьютекса после обработки нажатия левой кнопки мыши
-		ReleaseMutex(hMutex);
-
-		// Отправка сообщения другим экземплярам
-		PostMessage(HWND_BROADCAST, syncMsg, NULL, NULL);
-		break;
-	case syncMsg:
-		// Обновите ваш интерфейс или выполните другие действия, связанные с синхронизацией
-		InvalidateRect(hWnd, nullptr, TRUE);
 		break;
 
+		// Отрисовка крестика
 	case WM_RBUTTONDOWN:
 	{
-		hdc = GetDC(hWnd);
-		clickX = LOWORD(lParam);
-		clickY = HIWORD(lParam);
-		RECT rect;
-		GetClientRect(hWnd, &rect);
-		int cellSizeX = rect.right / N;
-		int cellSizeY = rect.bottom / N;
-		DrawCross(hdc, (clickX / cellSizeX) * cellSizeX, (clickY / cellSizeY) * cellSizeY, cellSizeX);
+		DrawCross(hdc, (clickX / cellWidth) * cellWidth, (clickY / cellHeight) * cellHeight, cellWidth, cellHeight);
 		ReleaseDC(hWnd, hdc);
-		PostMessage(HWND_BROADCAST, syncMsg, NULL, NULL);
 	}
 	break;
 
 	case WM_KEYDOWN:
 		if (wParam == VK_ESCAPE || (wParam == 81 && GetKeyState(VK_CONTROL) < 0)) {
+			// Выход из приложения
+			SaveConfig();  // Сохраняем конфигурацию перед закрытием
 			PostQuitMessage(0);
 		}
 		else if (wParam == 13) {  // Нажата клавиша ENTER
 			srand(static_cast<unsigned>(time(nullptr)));
-			config.backgroundColor = RGB(rand() % 256, rand() % 256, rand() % 256);
+			backgroundColor = RGB(rand() % 256, rand() % 256, rand() % 256);
 			InvalidateRect(hWnd, nullptr, TRUE);
-			SaveConfig();
 		}
 		else if (wParam == 67 && GetKeyState(VK_SHIFT) < 0) {  // Нажата клавиша C с зажатым Shift
-			if (GetFileAttributes(TEXT("C:\\Windows\\notepad.exe")) != INVALID_FILE_ATTRIBUTES) { // проверка на то, установлен ли блокнот у пользователя
+			if (GetFileAttributes(TEXT("C:\\Windows\\notepad.exe")) != INVALID_FILE_ATTRIBUTES) { // проверка на то, установлен ли Блокнот у пользователя
 				system("notepad.exe");
 			}
 			else {
@@ -450,36 +236,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
 			}
 		}
 		break;
-
-
+		// Изменение цвета сетки
 	case WM_MOUSEWHEEL:
 	{
-		short zDelta = GET_WHEEL_DELTA_WPARAM(wParam);  // Получаем дистанцию прокрутки колеса
-		BYTE red = GetRValue(config.gridColor);
-		BYTE green = GetGValue(config.gridColor);
-		BYTE blue = GetBValue(config.gridColor);
-
-		if (zDelta > 0)  // Прокрутка вперед
-		{
-			red = (red + 5) % 256;
-			green = (green + 5) % 256;
-			blue = (blue + 5) % 256;
-		}
-		else  // Прокрутка назад
-		{
-			red = (red - 5) % 256;
-			green = (green - 5) % 256;
-			blue = (blue - 5) % 256;
-		}
-
-		gridColor = RGB(red, green, blue);
-		config.gridColor = RGB(red, green, blue);
+		int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+		int r = GetRValue(gridColor) + delta;
+		int g = GetGValue(gridColor) + delta;
+		int b = GetBValue(gridColor) + delta;
+		gridColor = RGB(r, g, b);
 
 		InvalidateRect(hWnd, nullptr, TRUE);  // Перерисовать окно для применения нового цвета
-		SaveConfig();
+		SaveConfig();  // Сохраняем новый цвет линий сетки
 	}
 	break;
 
+	// Очистка фона
 	case WM_ERASEBKGND:
 	{
 		HBRUSH hbr = CreateSolidBrush(backgroundColor);
@@ -489,21 +260,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
 	}
 	break;
 
+	// Закрытие окна
 	case WM_DESTROY:
-		SaveConfig();
 		PostQuitMessage(0);
 		break;
+	default:
+		return DefWindowProc(hWnd, message, wParam, lParam);
+		break;
+	}
 
-	case WM_CLOSE:
-		// Закрытие окна
-		SaveConfig();
-		return DefWindowProc(hWnd, message, wParam, lParam);
-		break;
-	default: {
-		return DefWindowProc(hWnd, message, wParam, lParam);
-		if (message == syncMsg) InvalidateRect(hWnd, NULL, TRUE);
-		break;
-	}
-			 return 0;
-	}
+	return 0;
 }
